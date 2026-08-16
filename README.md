@@ -53,7 +53,10 @@ sube aquí es público**.
   reales en reposo, 100 Hz. Recorte del fichero `bio_resting_8min_100hz.csv`
   del proyecto [NeuroKit2](https://github.com/neuropsychology/NeuroKit)
   (Makowski et al. 2021, licencia MIT).
-- `notebooks/public/meditacion/` (pendiente): series RR del dataset
+- `notebooks/public/meditacion/`: las 58 series RR del dataset
   [meditation 1.0.0 de PhysioNet](https://physionet.org/content/meditation/1.0.0/)
-  (Peng et al. 1999) — instrucciones de subida dentro del notebook
-  `barorreflejo_modelos_contra_datos.py`.
+  (Peng et al. 1999; Goldberger et al. 2000): meditadores Chi (C) y Kundalini
+  (Y) pre/med, y controles metronómicos (M), espontáneos (N) y atletas (I).
+  Convertidas de las anotaciones WFDB (`.qrs`, descargadas del bucket S3
+  abierto `s3://physionet-open`) a texto plano de una columna (RR en ms) con
+  el paquete oficial `wfdb`.

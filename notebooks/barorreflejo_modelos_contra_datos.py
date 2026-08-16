@@ -671,21 +671,28 @@ def _(mo):
     todo esto. Con un solo sujeto no demostramos nada estadísticamente, pero
     tampoco hace falta: basta para ver que **la métrica sigue a la mecánica**.
 
-    ## Acto 4 · Meditadores (esperando datos) 🧘
+    ## Acto 4 · Meditadores 🧘
 
-    Aquí va el análisis del dataset clásico de Peng, Benson & Goldberger:
-    series RR de meditadores de **Chi** y **Kundalini** antes y durante la
-    meditación. La predicción de todo lo anterior es concreta: si esas
-    técnicas ralentizan la respiración hacia la zona de resonancia, deben
-    aparecer oscilaciones cardiacas *gigantes* a 0,05–0,1 Hz — sin necesidad
-    de invocar estados vagales especiales.
+    El dataset clásico de Peng, Benson & Goldberger (PhysioNet,
+    *meditation 1.0.0*, incluido en `notebooks/public/meditacion/` como
+    series RR convertidas del formato WFDB original): meditadores de **Chi**
+    (C1–C8) y **Kundalini** (Y1–Y4) antes y durante la meditación, más tres
+    grupos de control — respiración **metronómica** (M1–M14), respiración
+    **espontánea** (N1–N11) y **atletas de élite** (I1–I9).
+
+    La predicción de los tres actos anteriores es concreta: si estas técnicas
+    ralentizan la respiración hacia la zona de resonancia, deben aparecer
+    oscilaciones cardiacas *gigantes* a 0,05–0,1 Hz — sin necesidad de
+    invocar estados vagales especiales. Ojo al detalle del diseño: el grupo
+    metronómico respiraba regular pero a **0,25 Hz (15 resp/min)** — regular
+    y *lejos* de la resonancia. Ese detalle va a importar.
     """
     )
     return
 
 
 @app.cell
-def _(mo, np, pd):
+def _(espectro_welch, mo, np, pd, tacograma_uniforme):
     def med_carga(nombre):
         """Lector tolerante de las series RR de PhysioNet (meditation 1.0.0).
 
@@ -712,6 +719,13 @@ def _(mo, np, pd):
         ok = (rr > 0.3) & (rr < 2.5)
         return t[ok], rr[ok]
 
+    def med_potencia(t, rr):
+        """Potencia del tacograma en la banda de resonancia (0,025–0,15 Hz)."""
+        _, rru = tacograma_uniforme(t, rr, fs=4.0)
+        f, esp = espectro_welch(rru, 4.0, seg_s=120.0)
+        m = (f > 0.025) & (f < 0.15)
+        return float(esp[m].sum())
+
     MED_REGISTROS = [f"C{i}" for i in range(1, 9)] + [f"Y{i}" for i in range(1, 5)]
     med_datos = {}
     for med_r in MED_REGISTROS:
@@ -719,7 +733,7 @@ def _(mo, np, pd):
         med_med = med_carga(f"{med_r}_med.txt")
         if med_pre is not None and med_med is not None:
             med_datos[med_r] = {"pre": med_pre, "med": med_med}
-    return (med_datos,)
+    return med_carga, med_datos, med_potencia
 
 
 @app.cell
@@ -727,28 +741,16 @@ def _(med_datos, mo):
     if not med_datos:
         med_aviso = mo.callout(
             mo.md(
-                r"""
-    **Para activar este acto** (2 minutos):
-
-    1. Descarga el dataset (acceso abierto):
-       [physionet.org/content/meditation/1.0.0](https://physionet.org/content/meditation/1.0.0/)
-    2. De la carpeta `data/`, coge las series de los grupos Chi (C1…C8) y
-       Kundalini (Y1…Y4), en sus versiones **pre** y **med**.
-    3. Renómbralas `C1_pre.txt`, `C1_med.txt`, … `Y4_med.txt` y súbelas a
-       `notebooks/public/meditacion/` del repo (arrastrar y soltar en
-       github.com → Add file → Upload files).
-
-    En el siguiente push, esta sección se llena sola: tacogramas pre→med,
-    espectrogramas donde se ve *aparecer* la oscilación al empezar a meditar,
-    y comparación de amplitudes entre grupos. El lector de ficheros es
-    tolerante con el formato (1 o 2 columnas, s o ms), pero si algo no
-    cuadra, lo ajustamos.
-    """
+                "No encuentro las series RR en `notebooks/public/meditacion/` "
+                "(deberían venir con el repo: `C1_pre.txt` … `Y4_med.txt`, una "
+                "columna RR en ms). Si ves esto en la web publicada, revisa "
+                "que el export haya copiado la carpeta."
             ),
             kind="warn",
         )
     else:
         med_aviso = mo.md(
+            "### 4.1 · Un meditador de cerca\n\n"
             f"**Registros cargados:** {', '.join(sorted(med_datos))} — elige uno:"
         )
     med_aviso
@@ -767,7 +769,7 @@ def _(med_datos, mo):
 
 
 @app.cell
-def _(alt, med_datos, med_sel, mo, np, pd, espectro_welch, tacograma_uniforme):
+def _(alt, med_datos, med_potencia, med_sel, mo, np, pd, tacograma_uniforme):
     def med_espectrograma(t, rr, vent_s=120.0, paso_s=20.0):
         """STFT sencilla del tacograma: potencia 0–0,2 Hz frente al tiempo."""
         tt, rru = tacograma_uniforme(t, rr, fs=4.0)
@@ -818,13 +820,9 @@ def _(alt, med_datos, med_sel, mo, np, pd, espectro_welch, tacograma_uniforme):
             .properties(width=540, height=220, title="Espectrograma durante la meditación")
         )
 
-        def med_amp(t, rr):
-            _, esp = espectro_welch(tacograma_uniforme(t, rr, fs=4.0)[1], 4.0, seg_s=120.0)
-            f = np.fft.rfftfreq(int(120 * 4), 0.25)
-            m = (f > 0.025) & (f < 0.15)
-            return float(esp[m].sum())
-
-        med_ratio = med_amp(med_t_med, med_rr_med) / max(med_amp(med_t_pre, med_rr_pre), 1e-12)
+        med_ratio = med_potencia(med_t_med, med_rr_med) / max(
+            med_potencia(med_t_pre, med_rr_pre), 1e-12
+        )
         med_salida = mo.vstack(
             [
                 med_g_taco,
@@ -837,8 +835,108 @@ def _(alt, med_datos, med_sel, mo, np, pd, espectro_welch, tacograma_uniforme):
             ]
         )
     else:
-        med_salida = mo.md("*Sección a la espera de los datos (instrucciones arriba).*")
+        med_salida = mo.md("*Sección a la espera de los datos (aviso arriba).*")
     med_salida
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    ### 4.2 · Los cinco grupos, frente a frente
+
+    La figura central de Peng et al. (1999), reconstruida desde cero: potencia
+    del tacograma en la banda de resonancia (0,025–0,15 Hz) para **cada
+    registro** de los cinco grupos. Cada punto es una persona; la marca negra,
+    la mediana del grupo (ojo: eje logarítmico).
+    """
+    )
+    return
+
+
+@app.cell
+def _(alt, med_carga, med_potencia, mo, pd):
+    MED_GRUPOS = {
+        "Chi pre": [f"C{i}_pre.txt" for i in range(1, 9)],
+        "Chi meditación": [f"C{i}_med.txt" for i in range(1, 9)],
+        "Kundalini pre": [f"Y{i}_pre.txt" for i in range(1, 5)],
+        "Kundalini meditación": [f"Y{i}_med.txt" for i in range(1, 5)],
+        "Metronómica (control)": [f"M{i}.txt" for i in range(1, 15)],
+        "Espontánea (control)": [f"N{i}.txt" for i in range(1, 12)],
+        "Atletas (control)": [f"I{i}.txt" for i in range(1, 10)],
+    }
+    med_filas = []
+    for med_g, med_lista_f in MED_GRUPOS.items():
+        for med_fich in med_lista_f:
+            med_serie = med_carga(med_fich)
+            if med_serie is not None and len(med_serie[1]) > 400:
+                med_filas.append(
+                    {
+                        "grupo": med_g,
+                        "registro": med_fich.replace(".txt", ""),
+                        "potencia": med_potencia(*med_serie),
+                    }
+                )
+    med_pot_df = pd.DataFrame(med_filas)
+
+    if len(med_pot_df):
+        med_orden = [g for g in MED_GRUPOS if g in set(med_pot_df["grupo"])]
+        med_g_puntos = (
+            alt.Chart(med_pot_df)
+            .mark_circle(size=70, opacity=0.75)
+            .encode(
+                x=alt.X("grupo", sort=med_orden, title="", axis=alt.Axis(labelAngle=-25)),
+                y=alt.Y(
+                    "potencia",
+                    scale=alt.Scale(type="log"),
+                    title="Potencia 0,025–0,15 Hz (log)",
+                ),
+                color=alt.Color("grupo", legend=None),
+                tooltip=["registro", "potencia"],
+            )
+        )
+        med_g_med = (
+            alt.Chart(med_pot_df)
+            .mark_tick(color="black", size=30, thickness=2)
+            .encode(x=alt.X("grupo", sort=med_orden), y="median(potencia)")
+        )
+        med_cuadro = (med_g_puntos + med_g_med).properties(width=560, height=300)
+    else:
+        med_cuadro = mo.md("*Sin registros de grupos (faltan los ficheros).*")
+    med_cuadro
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    Tres lecturas, en orden de incomodidad creciente (los números son los de
+    esta métrica sobre estos datos — compruébalos en el gráfico):
+
+    1. **La meditación dispara la oscilación**: Chi ×2 y Kundalini ×3 sobre
+       sus propios "pre" (medianas ~46→99 y ~76→250). Es el efecto
+       "exagerado" que dio título al paper.
+    2. **El grupo metronómico es el MÁS BAJO de todos** (mediana ~28) — y eso
+       es exactamente lo que predicen los actos 1–3: respiraban regular pero
+       a 0,25 Hz, lejos de la resonancia. Su potencia se concentra fuera de
+       esta banda. La regularidad no fabrica la oscilación gigante; **la
+       frecuencia sí**. Un metrónomo a 6/min habría contado otra historia —
+       ese control es el que faltó.
+    3. **Los controles nocturnos (espontáneos y atletas) empatan con Chi en
+       meditación** (~95–100). Oscilaciones lentas grandes también aparecen
+       durmiendo, sin meditar. Parte de la diferencia con el paper original
+       es la métrica: Peng medía la *amplitud del pico más alto* (capta
+       oscilaciones episódicas y estrechas), y aquí integramos la banda en
+       ~50 min, lo que las diluye. Con n=8 y n=4 este dataset no zanja si hay
+       algo en Chi/Kundalini que la respiración lenta no explique — pero deja
+       la pregunta perfectamente planteada, que es lo que un notebook de
+       investigación primaria debe hacer. (Pista para seguir: mira el
+       espectrograma de 4.1 — la oscilación de la meditación es *episódica*;
+       prueba a cambiar la métrica y ver si el ranking cambia.)
+    """
+    )
     return
 
 
@@ -863,6 +961,9 @@ def _(mo):
     - Makowski, D., et al. (2021). NeuroKit2: A Python toolbox for
       neurophysiological signal processing. *Behavior Research Methods*,
       53(4), 1689–1696. (Origen de los datos de reposo, licencia MIT.)
+    - Goldberger, A. L., et al. (2000). PhysioBank, PhysioToolkit, and
+      PhysioNet. *Circulation*, 101(23), e215–e220. (Origen de las series de
+      meditación: dataset *meditation 1.0.0*, convertido de WFDB a texto.)
     - Grossman, P., & Taylor, E. W. (2007). Toward understanding respiratory
       sinus arrhythmia. *Biological Psychology*, 74(2), 263–285.
 
