@@ -769,7 +769,7 @@ def _(med_datos, mo):
 
 
 @app.cell
-def _(alt, med_datos, med_potencia, med_sel, mo, np, pd, tacograma_uniforme):
+def _(alt, espectro_welch, med_datos, med_potencia, med_sel, mo, np, pd, tacograma_uniforme):
     def med_espectrograma(t, rr, vent_s=120.0, paso_s=20.0):
         """STFT sencilla del tacograma: potencia 0–0,2 Hz frente al tiempo."""
         tt, rru = tacograma_uniforme(t, rr, fs=4.0)
@@ -820,13 +820,80 @@ def _(alt, med_datos, med_potencia, med_sel, mo, np, pd, tacograma_uniforme):
             .properties(width=540, height=220, title="Espectrograma durante la meditación")
         )
 
+        # Espectros pre vs med superpuestos
+        med_psd_tr = []
+        for med_fase, (med_tx, med_rrx) in [
+            ("pre", (med_t_pre, med_rr_pre)),
+            ("meditación", (med_t_med, med_rr_med)),
+        ]:
+            _, med_rru_x = tacograma_uniforme(med_tx, med_rrx, fs=4.0)
+            med_fx, med_px = espectro_welch(med_rru_x, 4.0, seg_s=120.0)
+            med_mx = (med_fx > 0.02) & (med_fx < 0.4)
+            med_psd_tr.append(
+                pd.DataFrame(
+                    {"f (Hz)": med_fx[med_mx], "potencia": med_px[med_mx], "fase": med_fase}
+                )
+            )
+        med_g_psd = (
+            alt.Chart(pd.concat(med_psd_tr, ignore_index=True))
+            .mark_line()
+            .encode(
+                x=alt.X("f (Hz)", title="Frecuencia (Hz)"),
+                y=alt.Y("potencia", scale=alt.Scale(type="log"), title="PSD (log)"),
+                color=alt.Color("fase", title=""),
+                tooltip=["f (Hz)", "potencia", "fase"],
+            )
+            .properties(width=540, height=220, title="Espectro pre vs meditación (mismo sujeto)")
+        )
+
+        # Poincaré pre vs med (RRₙ frente a RRₙ₊₁)
+        def med_poincare(rr, fase, tope=1800):
+            paso = max(1, len(rr) // tope)
+            return pd.DataFrame(
+                {
+                    "RRₙ (s)": rr[:-1:paso],
+                    "RRₙ₊₁ (s)": rr[1::paso],
+                    "fase": fase,
+                }
+            )
+        med_g_poin = (
+            alt.Chart(
+                pd.concat(
+                    [med_poincare(med_rr_pre, "pre"), med_poincare(med_rr_med, "meditación")],
+                    ignore_index=True,
+                )
+            )
+            .mark_circle(size=9, opacity=0.3)
+            .encode(
+                x=alt.X("RRₙ (s)", scale=alt.Scale(zero=False)),
+                y=alt.Y("RRₙ₊₁ (s)", scale=alt.Scale(zero=False)),
+                color=alt.Color("fase", title=""),
+            )
+            .properties(width=300, height=300, title="Poincaré: cada punto, dos latidos seguidos")
+        )
+
         med_ratio = med_potencia(med_t_med, med_rr_med) / max(
             med_potencia(med_t_pre, med_rr_pre), 1e-12
         )
         med_salida = mo.vstack(
             [
                 med_g_taco,
+                mo.md(
+                    "**Qué mirar:** en *pre* la FC serpentea sin patrón; en "
+                    "*meditación* aparece una ondulación lenta y regular. Los "
+                    "tres gráficos siguientes son la misma historia con tres "
+                    "lupas distintas:"
+                ),
+                med_g_psd,
                 med_g_spec,
+                mo.md(
+                    "El espectrograma muestra que la oscilación es **episódica**: "
+                    "franjas brillantes a 0,05–0,1 Hz que van y vienen — no un "
+                    "estado continuo. Y el Poincaré la convierte en geometría: "
+                    "la nube se estira en diagonal (latidos consecutivos muy "
+                    "correlacionados = oscilación lenta de gran amplitud):"
+                ),
+                med_g_poin,
                 mo.stat(
                     value=f"×{med_ratio:.1f}",
                     label="Potencia 0,025–0,15 Hz: meditación / pre",
@@ -844,19 +911,68 @@ def _(alt, med_datos, med_potencia, med_sel, mo, np, pd, tacograma_uniforme):
 def _(mo):
     mo.md(
         r"""
-    ### 4.2 · Los cinco grupos, frente a frente
+    ### 4.2 · La galería: los doce meditadores de un vistazo
 
-    La figura central de Peng et al. (1999), reconstruida desde cero: potencia
-    del tacograma en la banda de resonancia (0,025–0,15 Hz) para **cada
-    registro** de los cinco grupos. Cada punto es una persona; la marca negra,
-    la mediana del grupo (ojo: eje logarítmico).
+    Antes de resumir con números, mira los datos. Seis minutos de meditación
+    de **cada uno** de los doce sujetos (minutos 5–11 de su sesión, FC
+    remuestreada a 1 Hz). La oscilación gigante no es una anécdota de un
+    sujeto estrella: aparece en casi todos, cada uno con su frecuencia y su
+    estilo — y en algunos (búscalos) apenas asoma. Un promedio jamás te
+    enseñaría eso:
     """
     )
     return
 
 
 @app.cell
-def _(alt, med_carga, med_potencia, mo, pd):
+def _(alt, med_datos, mo, np, pd):
+    medg_filas = []
+    for medg_r in sorted(med_datos):
+        medg_t, medg_rr = med_datos[medg_r]["med"]
+        medg_t0 = medg_t[0] + 5 * 60.0
+        medg_tt = np.arange(medg_t0, min(medg_t0 + 6 * 60.0, medg_t[-1]), 1.0)
+        medg_fc = 60.0 / np.interp(medg_tt, medg_t, medg_rr)
+        medg_filas.append(
+            pd.DataFrame(
+                {"t (min)": (medg_tt - medg_t0) / 60.0, "FC (lpm)": medg_fc, "sujeto": medg_r}
+            )
+        )
+    medg_df = pd.concat(medg_filas, ignore_index=True)
+    medg_galeria = (
+        alt.Chart(medg_df)
+        .mark_line(strokeWidth=1)
+        .encode(
+            x=alt.X("t (min)", title=None),
+            y=alt.Y("FC (lpm)", scale=alt.Scale(zero=False), title=None),
+            color=alt.value("#4c78a8"),
+            facet=alt.Facet("sujeto", columns=4, title=None),
+        )
+        .resolve_scale(y="independent")
+        .properties(width=130, height=80)
+    )
+    mo.vstack([medg_galeria])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    ### 4.3 · Los cinco grupos, frente a frente
+
+    Ahora sí, los resúmenes — tres gráficos que se leen en cadena. Primero el
+    **espectro mediano de cada grupo**: dónde pone su energía cada población.
+    Después, **dónde está el pico dominante de cada registro**. Y por último
+    la figura central de Peng et al. (1999) reconstruida: **potencia en la
+    banda de resonancia** (0,025–0,15 Hz) por registro, con la mediana del
+    grupo en negro (ejes logarítmicos).
+    """
+    )
+    return
+
+
+@app.cell
+def _(espectro_welch, med_carga, np, pd, tacograma_uniforme):
     MED_GRUPOS = {
         "Chi pre": [f"C{i}_pre.txt" for i in range(1, 9)],
         "Chi meditación": [f"C{i}_med.txt" for i in range(1, 9)],
@@ -867,41 +983,108 @@ def _(alt, med_carga, med_potencia, mo, pd):
         "Atletas (control)": [f"I{i}.txt" for i in range(1, 10)],
     }
     med_filas = []
+    med_psd_tramos = []
     for med_g, med_lista_f in MED_GRUPOS.items():
+        med_psds = []
+        med_fgrid = None
         for med_fich in med_lista_f:
             med_serie = med_carga(med_fich)
-            if med_serie is not None and len(med_serie[1]) > 400:
-                med_filas.append(
+            if med_serie is None or len(med_serie[1]) <= 400:
+                continue
+            med_ts, med_rrs = med_serie
+            _, med_rrus = tacograma_uniforme(med_ts, med_rrs, fs=4.0)
+            med_fs_, med_ps = espectro_welch(med_rrus, 4.0, seg_s=120.0)
+            med_ms = (med_fs_ > 0.02) & (med_fs_ < 0.4)
+            med_fgrid = med_fs_[med_ms]
+            med_psds.append(med_ps[med_ms])
+            med_filas.append(
+                {
+                    "grupo": med_g,
+                    "registro": med_fich.replace(".txt", ""),
+                    "potencia": float(
+                        med_ps[(med_fs_ > 0.025) & (med_fs_ < 0.15)].sum()
+                    ),
+                    "pico (Hz)": float(med_fgrid[np.argmax(med_ps[med_ms])]),
+                }
+            )
+        if med_psds:
+            med_psd_tramos.append(
+                pd.DataFrame(
                     {
+                        "f (Hz)": med_fgrid,
+                        "PSD mediana": np.median(np.vstack(med_psds), axis=0),
                         "grupo": med_g,
-                        "registro": med_fich.replace(".txt", ""),
-                        "potencia": med_potencia(*med_serie),
                     }
                 )
+            )
     med_pot_df = pd.DataFrame(med_filas)
+    med_psd_df = (
+        pd.concat(med_psd_tramos, ignore_index=True) if med_psd_tramos else pd.DataFrame()
+    )
+    med_orden = (
+        [g for g in MED_GRUPOS if g in set(med_pot_df["grupo"])] if len(med_pot_df) else []
+    )
+    return med_orden, med_pot_df, med_psd_df
 
+
+@app.cell
+def _(alt, med_orden, med_pot_df, med_psd_df, mo, pd):
     if len(med_pot_df):
-        med_orden = [g for g in MED_GRUPOS if g in set(med_pot_df["grupo"])]
+        med_g_psdgrupos = (
+            alt.Chart(med_psd_df)
+            .mark_line()
+            .encode(
+                x=alt.X("f (Hz)", title="Frecuencia (Hz)"),
+                y=alt.Y("PSD mediana", scale=alt.Scale(type="log"), title="PSD mediana (log)"),
+                color=alt.Color("grupo", sort=med_orden, title=""),
+                tooltip=["f (Hz)", "PSD mediana", "grupo"],
+            )
+            .properties(width=560, height=260, title="Dónde pone su energía cada grupo")
+        )
+
+        med_banda_res = pd.DataFrame({"x1": [0.025], "x2": [0.15]})
+        med_g_picos = (
+            alt.Chart(med_banda_res).mark_rect(opacity=0.10, color="#4c78a8").encode(x="x1", x2="x2")
+            + alt.Chart(med_pot_df)
+            .mark_circle(size=70, opacity=0.75)
+            .encode(
+                x=alt.X("pico (Hz)", title="Frecuencia del pico dominante (Hz)"),
+                y=alt.Y("grupo", sort=med_orden, title=""),
+                color=alt.Color("grupo", legend=None),
+                tooltip=["registro", "pico (Hz)"],
+            )
+        ).properties(width=560, height=220, title="El pico dominante de cada registro (banda azul: zona de resonancia)")
+
         med_g_puntos = (
             alt.Chart(med_pot_df)
             .mark_circle(size=70, opacity=0.75)
             .encode(
                 x=alt.X("grupo", sort=med_orden, title="", axis=alt.Axis(labelAngle=-25)),
-                y=alt.Y(
-                    "potencia",
-                    scale=alt.Scale(type="log"),
-                    title="Potencia 0,025–0,15 Hz (log)",
-                ),
+                y=alt.Y("potencia", scale=alt.Scale(type="log"), title="Potencia 0,025–0,15 Hz (log)"),
                 color=alt.Color("grupo", legend=None),
                 tooltip=["registro", "potencia"],
             )
         )
-        med_g_med = (
+        med_g_medianas = (
             alt.Chart(med_pot_df)
             .mark_tick(color="black", size=30, thickness=2)
             .encode(x=alt.X("grupo", sort=med_orden), y="median(potencia)")
         )
-        med_cuadro = (med_g_puntos + med_g_med).properties(width=560, height=300)
+        med_cuadro = mo.vstack(
+            [
+                med_g_psdgrupos,
+                mo.md(
+                    "**Qué mirar:** los grupos en meditación concentran su "
+                    "energía en 0,05–0,1 Hz; el metronómico tiene su firma en "
+                    "un pico estrecho a **0,25 Hz** — su respiración pautada — "
+                    "y casi nada en la banda de resonancia. El siguiente "
+                    "gráfico hace el recuento registro a registro:"
+                ),
+                med_g_picos,
+                mo.md("Y la figura central del paper, reconstruida:"),
+                (med_g_puntos + med_g_medianas).properties(width=560, height=300),
+            ]
+        )
     else:
         med_cuadro = mo.md("*Sin registros de grupos (faltan los ficheros).*")
     med_cuadro
