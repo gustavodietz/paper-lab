@@ -42,5 +42,18 @@ sube aquí es público**.
 ## Convenciones
 
 - Un notebook = una pregunta o un paper. Nombre descriptivo en snake_case.
-- Datos pequeños (CSV) en `data/`; los notebooks los leen con rutas relativas.
+- Datos pequeños en `notebooks/public/`: esa carpeta se copia al export WASM,
+  y los notebooks la leen con `mo.notebook_location() / "public" / fichero`
+  (funciona igual en local y en la web publicada).
 - Los notebooks son `.py` planos: se revisan y diffean como código normal.
+
+## Datos incluidos
+
+- `notebooks/public/reposo_ecg_rsp_100hz.csv`: 8,4 min de ECG + respiración
+  reales en reposo, 100 Hz. Recorte del fichero `bio_resting_8min_100hz.csv`
+  del proyecto [NeuroKit2](https://github.com/neuropsychology/NeuroKit)
+  (Makowski et al. 2021, licencia MIT).
+- `notebooks/public/meditacion/` (pendiente): series RR del dataset
+  [meditation 1.0.0 de PhysioNet](https://physionet.org/content/meditation/1.0.0/)
+  (Peng et al. 1999) — instrucciones de subida dentro del notebook
+  `barorreflejo_modelos_contra_datos.py`.
